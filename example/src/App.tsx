@@ -7,6 +7,7 @@ import { Budgets } from "./components/Budgets";
 import { Calls } from "./components/Calls";
 import { Connect } from "./components/Connect";
 import { readKey, removeKey, saveKey } from "./lib/byok";
+import { readLog, writeLog } from "./lib/session";
 
 export type Tab = "overview" | "send" | "customers" | "budgets" | "calls";
 export type LogLine = { id: number; title: string; detail: string };
@@ -22,9 +23,13 @@ const TABS: { id: Tab; label: string }[] = [
 export default function App() {
   const [apiKey, setApiKey] = useState<string | null>(() => readKey());
   const [tab, setTab] = useState<Tab>("overview");
-  const [log, setLog] = useState<LogLine[]>([]);
+  const [log, setLog] = useState<LogLine[]>(() => readLog());
   const onLog = useCallback((title: string, detail: string) => {
-    setLog((lines) => [{ id: Date.now() + Math.random(), title, detail }, ...lines].slice(0, 12));
+    setLog((lines) => {
+      const next = [{ id: Date.now() + Math.random(), title, detail }, ...lines].slice(0, 12);
+      writeLog(next);
+      return next;
+    });
   }, []);
 
   if (!apiKey) {
@@ -82,6 +87,8 @@ export default function App() {
             style={{ marginTop: 8 }}
             onClick={() => {
               removeKey();
+              writeLog([]);
+              setLog([]);
               setApiKey(null);
             }}
           >
