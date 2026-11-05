@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "lib": [
+      "DOM",
+      "DOM.Iterable",
+      "ESNext"
+    ],
+    "skipLibCheck": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "noEmit": true,
+    "paths": {
+      "convex-weflayr": [
+        "../src/client/index.ts"
+      ],
+      "convex-weflayr/ai-sdk": [
+        "../src/ai-sdk/index.ts"
+      ]
+    }
+  },
+  "include": [
+    "./src",
+    "vite.config.ts"
+  ]
+}

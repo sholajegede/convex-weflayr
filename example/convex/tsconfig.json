@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "strict": true,
+    "moduleResolution": "Bundler",
+    "skipLibCheck": true,
+    "allowSyntheticDefaultImports": true,
+    "target": "ESNext",
+    "lib": ["ES2023", "dom"],
+    "forceConsistentCasingInFileNames": true,
+    "module": "ESNext",
+    "isolatedModules": true,
+    "noEmit": true,
+    "types": ["node"],
+    "paths": {
+      "convex-weflayr": ["../../src/client/index.ts"],
+      "convex-weflayr/ai-sdk": ["../../src/ai-sdk/index.ts"]
+    }
+  },
+  "include": ["./**/*"],
+  "exclude": ["./_generated"]
+}
