@@ -64,6 +64,29 @@ Open the app and paste your key. Then:
 - **Budgets** sets a monthly budget and stops a customer who has used it.
 - **Calls** lists every saved call.
 
+### What it looks like
+
+An agent run. Four steps share one run id, so the cost of the run is the sum of
+its steps:
+
+![An agent run with the cost of each step](docs/images/agent-run.jpg)
+
+A budget. After three calls the customer has used $0.000021 of a $0.00002
+budget, and the fourth call is stopped before the model runs:
+
+![A customer stopped at their monthly budget](docs/images/budget-block.jpg)
+
+Spend by customer and by call, and every saved call:
+
+![Spend by customer](docs/images/customers.jpg)
+
+![The call log](docs/images/calls.jpg)
+
+The same calls in the Weflayr dashboard, grouped by the feature names the
+component sent:
+
+![Cost per feature in Weflayr](docs/images/weflayr-dashboard.jpg)
+
 About your key: it is saved in your browser's localStorage and sent with each
 call so the call can be made. It is never saved in the database. Each browser
 gets a random id, so you only see your own calls. The database holds the

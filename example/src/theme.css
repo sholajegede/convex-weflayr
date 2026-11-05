@@ -476,7 +476,7 @@ tr.on td {
 .gate {
   max-width: 880px;
   margin: 0 auto;
-  padding: 72px 32px 64px;
+  padding: 48px 32px 64px;
   text-align: center;
 }
 .gate h1 {
@@ -500,7 +500,11 @@ tr.on td {
 .gate-form {
   display: flex;
   gap: 12px;
-  margin: 28px 0 14px;
+  margin: 8px 0 12px;
+}
+.gate-note {
+  text-align: left;
+  max-width: 100%;
 }
 .gate-form input {
   flex: 1;

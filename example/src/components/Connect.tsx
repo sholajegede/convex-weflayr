@@ -15,8 +15,36 @@ export function Connect(props: { onSave: (key: string) => void }) {
       </h1>
       <p className="gate-lead">
         convex-weflayr is a Convex component. It sends your app's model calls through the Weflayr
-        gateway and saves the cost of each call, per customer, in your own database. This demo
-        makes real calls so you can see it work.
+        gateway and saves the cost of each call, per customer, in your own database.
+      </p>
+
+      <form
+        className="gate-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (key) props.onSave(key);
+        }}
+      >
+        <input
+          type="password"
+          autoComplete="off"
+          spellCheck={false}
+          placeholder="Paste your Weflayr API key to start"
+          value={value}
+          onChange={(event) => setValue(event.target.value)}
+        />
+        <button className="btn" type="submit" disabled={!key}>
+          Use this key
+        </button>
+      </form>
+      <p className="note gate-note">
+        No key yet?{" "}
+        <a href="https://app.weflayr.com" target="_blank" rel="noreferrer">
+          Sign up for Weflayr
+        </a>{" "}
+        and create an API key in the dashboard. A new key just for this demo is best. The key stays
+        in this browser and is never saved in the database. A test call costs about $0.00001, and
+        you do not need a key from any model provider.
       </p>
 
       <section className="onb">
@@ -61,53 +89,6 @@ export function Connect(props: { onSave: (key: string) => void }) {
             <p>Read every saved call, exactly as it is stored.</p>
           </div>
         </div>
-      </section>
-
-      <section className="onb">
-        <div className="onb-label">Your key</div>
-        <p className="onb-text">
-          The calls in this demo are real, so they use your own Weflayr account. You do not need a
-          key from any model provider. A test call costs about $0.00001.
-        </p>
-        <div className="grid cols-3">
-          <div className="cell">
-            <div className="stat-label">1</div>
-            <p>
-              <a href="https://app.weflayr.com" target="_blank" rel="noreferrer">
-                Sign up for Weflayr
-              </a>
-              , or log in.
-            </p>
-          </div>
-          <div className="cell">
-            <div className="stat-label">2</div>
-            <p>Create an API key in your Weflayr dashboard. A new key just for this demo is best.</p>
-          </div>
-          <div className="cell">
-            <div className="stat-label">3</div>
-            <p>Paste it below.</p>
-          </div>
-        </div>
-
-        <form
-          className="gate-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (key) props.onSave(key);
-          }}
-        >
-          <input
-            type="password"
-            autoComplete="off"
-            spellCheck={false}
-            placeholder="Your Weflayr API key"
-            value={value}
-            onChange={(event) => setValue(event.target.value)}
-          />
-          <button className="btn" type="submit" disabled={!key}>
-            Use this key
-          </button>
-        </form>
       </section>
 
       <section className="onb">
