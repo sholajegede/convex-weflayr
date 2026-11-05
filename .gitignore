@@ -15,3 +15,9 @@ node_modules
 *.tsbuildinfo
 
 .env.local
+
+.agents
+.claude
+skills-lock.json
+CLAUDE.md
+AGENTS.md
