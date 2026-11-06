@@ -5,13 +5,16 @@ matches a tag and carries npm provenance.
 
 ## One time
 
-1. Create the repository `sholajegede/convex-weflayr` on GitHub and push `main`.
-2. Create an npm automation token that can publish `convex-weflayr`.
-3. In the repository settings, add a secret named `NPM_TOKEN` with that token,
-   and an environment named `npm`. Add a required reviewer to the environment
-   if you want a manual approval before each publish.
-4. Turn on branch protection for `main`: require the `CI` checks and a pull
-   request.
+1. Push `main` to `sholajegede/convex-weflayr` on GitHub.
+2. On npmjs.com open the package, then Settings, then Trusted Publisher, and choose
+   GitHub Actions. Fill in organization or user `sholajegede`, repository
+   `convex-weflayr`, workflow filename `release.yml` and environment `npm`. Allow
+   `npm publish`.
+3. In the GitHub repository, create an environment named `npm`. Add a required
+   reviewer if you want a manual approval before each publish.
+
+No npm token is stored anywhere. The workflow proves its identity to npm for each
+publish.
 
 ## Each release
 
