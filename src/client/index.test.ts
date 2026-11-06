@@ -366,7 +366,7 @@ describe("budget", () => {
       )
       .catch((e) => e);
     expect(error).toBeInstanceOf(WeflayrBudgetError);
-    expect(error.message).toMatch(/\$5\.2000 of its \$5\.00/);
+    expect(error.message).toMatch(/\$5\.2 of its \$5 monthly/);
   });
 });
 
@@ -376,5 +376,17 @@ describe("dates", () => {
     expect(currentMonth(now)).toBe("2026-11");
     expect(lastDays(7, now)).toEqual({ from: "2026-10-26", to: "2026-11-01" });
     expect(lastDays(1, now)).toEqual({ from: "2026-11-01", to: "2026-11-01" });
+  });
+});
+
+describe("budget error", () => {
+  test("shows small budgets in full instead of rounding them to $0.00", () => {
+    const error = new WeflayrBudgetError("resend", 0.00002, 0.000021);
+    expect(error.message).toBe(
+      'Customer "resend" has used $0.000021 of its $0.00002 monthly AI budget.',
+    );
+    expect(new WeflayrBudgetError("acme", 25, 25.5).message).toContain(
+      "$25.5 of its $25 monthly",
+    );
   });
 });

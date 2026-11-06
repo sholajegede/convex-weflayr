@@ -42,10 +42,14 @@ is not recorded.
 
   ```ts
   // convex/maintenance.ts
+  import { internalMutation } from "./_generated/server";
+  import { weflayr } from "./weflayr"; // where you created the Weflayr instance
+
   export const purge = internalMutation({
     args: {},
     handler: async (ctx) => {
       const ninetyDays = Date.now() - 90 * 24 * 60 * 60 * 1000;
+      // Deletes up to 500 calls per run. If hasMore is true, the next daily run continues.
       await weflayr.purge(ctx, ninetyDays);
     },
   });

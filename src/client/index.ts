@@ -59,6 +59,11 @@ type RunMutation = {
 };
 type RunQuery = { runQuery: GenericActionCtx<GenericDataModel>["runQuery"] };
 
+/** Dollars with up to six decimals, so a budget of $0.00002 does not show as $0.00. */
+function dollars(value: number): string {
+  return `$${Number(value.toFixed(6))}`;
+}
+
 export class WeflayrBudgetError extends Error {
   constructor(
     readonly customer: string,
@@ -66,7 +71,7 @@ export class WeflayrBudgetError extends Error {
     readonly spentUsd: number,
   ) {
     super(
-      `Customer "${customer}" has used $${spentUsd.toFixed(4)} of its $${limitUsd.toFixed(2)} monthly AI budget.`,
+      `Customer "${customer}" has used ${dollars(spentUsd)} of its ${dollars(limitUsd)} monthly AI budget.`,
     );
     this.name = "WeflayrBudgetError";
   }

@@ -168,6 +168,31 @@ fails, it saves the failure and throws the error again. Without the AI SDK,
 `weflayr.connection()` returns the base URL and key for any OpenAI compatible
 client.
 
+### Streaming
+
+`track` reads token usage from the result of `generateText`. A `streamText`
+result only has its usage when the stream ends, so record the call yourself in
+`onFinish`:
+
+```ts
+const started = Date.now();
+const result = streamText({
+  model: weflayrModel(weflayr, "claude-haiku-5-5"),
+  headers: weflayr.headers(meta),
+  prompt,
+  onFinish: async ({ usage }) => {
+    await weflayr.record(ctx, {
+      ...meta,
+      model: "claude-haiku-5-5",
+      inputTokens: usage.inputTokens ?? 0,
+      outputTokens: usage.outputTokens ?? 0,
+      latencyMs: Date.now() - started,
+      status: "ok",
+    });
+  },
+});
+```
+
 ### Keep a call alive if the gateway fails
 
 `withFallback` tries the gateway first. If it fails, it runs the same call
@@ -268,6 +293,11 @@ months are UTC.
   already running can push a customer past it.
 - A customer who is not on the allow list runs the direct call, and that call is
   not saved.
+- `usageByCustomer` and the other reports read one `daily` row per customer,
+  call and day in the range. With many customers, keep the range short or pass a
+  customer, so a query stays inside Convex's read limits.
+- `track` cannot read usage from a stream. Record streamed calls in `onFinish`,
+  as shown under Streaming.
 
 ## Troubleshooting
 
