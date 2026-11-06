@@ -282,3 +282,64 @@ describe("purge", () => {
     expect(result).toEqual({ deleted: 2, hasMore: true });
   });
 });
+
+describe("synced cost and margin", () => {
+  test("after a sync, spend is Weflayr's cost plus calls stored since shortly before it", async () => {
+    const t = initConvexTest();
+    await t.mutation(api.lib.setBudget, { customer: "acme", monthlyUsd: 5 });
+    await t.mutation(api.lib.record, { ...base, costUsd: 3, at: DAY });
+    expect(
+      await t.query(api.lib.budgetStatus, { customer: "acme", month: "2026-11" }),
+    ).toMatchObject({ spentUsd: 3, source: "local", riskStatus: null });
+
+    await t.mutation(api.lib.saveSynced, {
+      month: "2026-11",
+      syncedAt: DAY + 3_600_000,
+      rows: [{ customer: "acme", costUsd: 4.5, revenue: 10, marginPct: 55, riskStatus: "watch" }],
+    });
+    await t.mutation(api.lib.record, { ...base, costUsd: 0.25, at: DAY + 3_700_000 });
+
+    const status = await t.query(api.lib.budgetStatus, { customer: "acme", month: "2026-11" });
+    expect(status).toMatchObject({ source: "weflayr", riskStatus: "watch", allowed: true });
+    expect(status.spentUsd).toBeCloseTo(4.75, 10);
+
+    await t.mutation(api.lib.record, { ...base, costUsd: 0.5, at: DAY + 3_800_000 });
+    expect(
+      await t.query(api.lib.budgetStatus, { customer: "acme", month: "2026-11" }),
+    ).toMatchObject({ allowed: false });
+  });
+
+  test("a sync replaces the last one for the same customer and month, and customerStatus reads it", async () => {
+    const t = initConvexTest();
+    for (const costUsd of [1, 2]) {
+      await t.mutation(api.lib.saveSynced, {
+        month: "2026-11",
+        syncedAt: DAY + costUsd,
+        rows: [{ customer: "acme", costUsd, revenue: null, marginPct: null, riskStatus: null }],
+      });
+    }
+    expect(await t.query(api.lib.customerStatus, { customer: "acme", month: "2026-11" })).toEqual({
+      customer: "acme",
+      month: "2026-11",
+      costUsd: 2,
+      revenue: null,
+      marginPct: null,
+      riskStatus: null,
+      syncedAt: DAY + 2,
+    });
+    expect(await t.query(api.lib.customerStatus, { customer: "acme", month: "2026-12" })).toBeNull();
+    expect(await t.query(api.lib.syncedCustomers, { month: "2026-11" })).toHaveLength(1);
+  });
+
+  test("a call stores the strategy it asked for and the gateway's warnings", async () => {
+    const t = initConvexTest();
+    await t.mutation(api.lib.record, {
+      ...base,
+      requestedModel: "strategy/drafting:4",
+      warnings: '[{"parameter":"temperature"}]',
+      at: DAY,
+    });
+    const [call] = await t.query(api.lib.recentCalls, { customer: "acme" });
+    expect(call).toMatchObject({ model: "claude-opus-5-5", requestedModel: "strategy/drafting:4" });
+  });
+});

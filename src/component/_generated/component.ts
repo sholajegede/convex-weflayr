@@ -27,15 +27,64 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
       budgetStatus: FunctionReference<
         "query",
         "internal",
-        { customer: string; month: string },
+        { customer: string; month: string; settleMs?: number },
         {
           allowed: boolean;
           customer: string;
           limitUsd: number | null;
           month: string;
           remainingUsd: number | null;
+          riskStatus: string | null;
+          source: "weflayr" | "local";
           spentUsd: number;
         },
+        Name
+      >;
+      customerStatus: FunctionReference<
+        "query",
+        "internal",
+        { customer: string; month: string },
+        {
+          costUsd: number;
+          customer: string;
+          marginPct: number | null;
+          month: string;
+          revenue: number | null;
+          riskStatus: string | null;
+          syncedAt: number;
+        } | null,
+        Name
+      >;
+      saveSynced: FunctionReference<
+        "mutation",
+        "internal",
+        {
+          month: string;
+          rows: Array<{
+            costUsd: number;
+            customer: string;
+            marginPct: number | null;
+            revenue: number | null;
+            riskStatus: string | null;
+          }>;
+          syncedAt: number;
+        },
+        number,
+        Name
+      >;
+      syncedCustomers: FunctionReference<
+        "query",
+        "internal",
+        { limit?: number; month: string },
+        Array<{
+          costUsd: number;
+          customer: string;
+          marginPct: number | null;
+          month: string;
+          revenue: number | null;
+          riskStatus: string | null;
+          syncedAt: number;
+        }>,
         Name
       >;
       clearBudget: FunctionReference<
@@ -71,8 +120,10 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           model: string;
           outputTokens: number;
           plan?: string;
+          requestedModel?: string;
           runId?: string;
           status: "ok" | "error" | "fallback";
+          warnings?: string;
         }>,
         Name
       >;
@@ -92,8 +143,10 @@ export type ComponentApi<Name extends string | undefined = string | undefined> =
           model: string;
           outputTokens: number;
           plan?: string;
+          requestedModel?: string;
           runId?: string;
           status: "ok" | "error" | "fallback";
+          warnings?: string;
         },
         string,
         Name

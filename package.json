@@ -1,6 +1,6 @@
 {
   "name": "convex-weflayr",
-  "description": "Send a Convex app's model calls through the Weflayr gateway, and keep cost per customer, per call and per day in your own database.",
+  "description": "Run a Convex app on Weflayr routing strategies with the customer on every call, and bring Weflayr's real cost and margin per customer into your database.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/sholajegede/convex-weflayr.git"
@@ -9,7 +9,7 @@
   "bugs": {
     "url": "https://github.com/sholajegede/convex-weflayr/issues"
   },
-  "version": "0.1.1",
+  "version": "0.2.0",
   "license": "Apache-2.0",
   "keywords": [
     "convex",
@@ -17,7 +17,8 @@
     "weflayr",
     "ai-gateway",
     "llm",
-    "cost-tracking",
+    "routing-strategies",
+    "margin",
     "ai-sdk",
     "multi-tenant"
   ],

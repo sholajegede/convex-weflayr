@@ -1,5 +1,13 @@
 import type { GenericActionCtx, GenericDataModel } from "convex/server";
 import type { ComponentApi } from "../component/_generated/component.js";
+import {
+  type RevenueRow,
+  type RiskStatus,
+  WeflayrApi,
+  monthRange,
+} from "./api.js";
+
+export * from "./api.js";
 
 export const GATEWAY_URL = "https://gateway.weflayr.com/v1";
 export const METADATA_HEADER = "x-weflayr-metadata";
@@ -9,20 +17,45 @@ export type Prices = Record<
   { inputPerMillion: number; outputPerMillion: number }
 >;
 
+type Auth = {
+  auth: { getUserIdentity(): Promise<{ subject: string } | null> };
+};
+
 export type WeflayrOptions = {
   /** Maps each call name to the feature it belongs to. A call that is not listed is filed under `defaultFeature`. */
   features?: Record<string, string>;
   defaultFeature?: string;
+  /**
+   * The model or routing strategy each call uses, by call name. Use `strategy(id, version)` so the
+   * model is picked in Weflayr, not in your code. Read it with `weflayr.modelFor(call)`.
+   */
+  models?: Record<string, string>;
+  /** The model or strategy for calls not listed in `models`. */
+  defaultModel?: string;
   baseURL?: string;
-  /** Defaults to the WEFLAYR_API_KEY environment variable. */
+  /** The gateway key. Defaults to the WEFLAYR_API_KEY environment variable. */
   apiKey?: string;
+  /** The key for Weflayr's management API. Defaults to WEFLAYR_MANAGEMENT_KEY, then WEFLAYR_API_KEY. */
+  managementKey?: string;
+  managementURL?: string;
   /**
    * Which customers may go through the gateway: "*", a comma separated string, a list, or a function.
    * Defaults to the WEFLAYR_CUSTOMERS environment variable. When nothing is set, no customer is allowed.
    */
   allow?: "*" | string | string[] | ((customer: string) => boolean);
-  /** Dollars per million tokens by model id, used to estimate cost when the call does not report one. */
+  /**
+   * Who a call is for, from the function's context. Defaults to the signed-in user's subject.
+   * Return an organization or workspace id for team apps.
+   */
+  customer?: (ctx: Auth) => Promise<string | null | undefined> | string | null | undefined;
+  /** What `callMeta` does when no customer resolves. Defaults to "throw". */
+  missingCustomer?: "throw" | "warn";
+  /** Dollars per million tokens by model id, used to estimate cost between syncs with Weflayr. */
   prices?: Prices;
+  /** Margin statuses that make `assertWithinBudget` throw, for example ["unprofitable"]. Read from the last `sync`. */
+  stopOnMargin?: RiskStatus[];
+  /** How long a stored call is added on top of Weflayr's synced cost, to cover the time Weflayr takes to record it. Defaults to 5 minutes. */
+  settleMs?: number;
 };
 
 export type CallMeta = {
@@ -31,12 +64,13 @@ export type CallMeta = {
   /** The name of the call, for example "draft-post". A benchmark in Weflayr is set up per call name. */
   call: string;
   plan?: string;
-  /** Groups the calls of one job. Sent to Weflayr as the run_id tag and stored with each call. */
+  /** Weflayr's feature run id, to group the calls of one job: 32 lowercase hex characters from `newRunId()`. */
   runId?: string;
   tags?: Record<string, string>;
 };
 
 export type TrackMeta = CallMeta & {
+  /** The model or strategy the call asks for. The model that answered is read from the result when it is there. */
   model: string;
   costUsd?: number;
   status?: "ok" | "fallback";
@@ -46,6 +80,10 @@ export type Extracted = {
   inputTokens: number;
   outputTokens: number;
   costUsd?: number;
+  /** The model that answered, when different from the one asked for. */
+  model?: string;
+  /** The gateway's weflayr_warnings. */
+  warnings?: unknown[];
 };
 
 export type TrackOptions<T> = {
@@ -77,6 +115,25 @@ export class WeflayrBudgetError extends Error {
   }
 }
 
+export class WeflayrMarginError extends Error {
+  constructor(
+    readonly customer: string,
+    readonly riskStatus: string,
+  ) {
+    super(
+      `Customer "${customer}" is ${riskStatus.replace("_", " ")} on AI margin this month.`,
+    );
+    this.name = "WeflayrMarginError";
+  }
+}
+
+const RUN_ID = /^[0-9a-f]{32}$/;
+
+/** The model id for a Weflayr routing strategy, optionally pinned to one version. */
+export function strategy(id: string, version?: number | string): string {
+  return version === undefined ? `strategy/${id}` : `strategy/${id}:${version}`;
+}
+
 export function currentMonth(now: number = Date.now()): string {
   return new Date(now).toISOString().slice(0, 7);
 }
@@ -90,8 +147,9 @@ export function lastDays(days: number, now: number = Date.now()): Range {
   };
 }
 
+/** A new Weflayr feature run id: 32 lowercase hex characters. */
 export function newRunId(): string {
-  return crypto.randomUUID();
+  return crypto.randomUUID().replace(/-/g, "");
 }
 
 function asciiJson(value: unknown): string {
@@ -101,19 +159,26 @@ function asciiJson(value: unknown): string {
   );
 }
 
-function readUsage(result: unknown): Extracted {
-  const usage =
-    (result as { usage?: Record<string, unknown> } | null)?.usage ?? {};
+function readResult(result: unknown): Extracted {
+  const value = result as {
+    usage?: Record<string, unknown>;
+    response?: { modelId?: unknown; body?: { weflayr_warnings?: unknown } };
+  } | null;
+  const usage = value?.usage ?? {};
   const pick = (...keys: string[]) => {
     for (const key of keys) {
-      const value = usage[key];
-      if (typeof value === "number" && Number.isFinite(value)) return value;
+      const number = usage[key];
+      if (typeof number === "number" && Number.isFinite(number)) return number;
     }
     return 0;
   };
+  const model = value?.response?.modelId;
+  const warnings = value?.response?.body?.weflayr_warnings;
   return {
     inputTokens: pick("inputTokens", "promptTokens"),
     outputTokens: pick("outputTokens", "completionTokens"),
+    ...(typeof model === "string" && model !== "" ? { model } : {}),
+    ...(Array.isArray(warnings) && warnings.length ? { warnings } : {}),
   };
 }
 
@@ -123,6 +188,8 @@ function describeError(error: unknown): string {
 }
 
 export class Weflayr {
+  private apiClient?: WeflayrApi;
+
   constructor(
     public component: ComponentApi,
     private options: WeflayrOptions = {},
@@ -130,6 +197,15 @@ export class Weflayr {
 
   get baseURL(): string {
     return this.options.baseURL ?? GATEWAY_URL;
+  }
+
+  /** Weflayr's management API: cost, margin, revenue and customer tags. Call it from actions. */
+  get api(): WeflayrApi {
+    this.apiClient ??= new WeflayrApi({
+      apiKey: this.options.managementKey,
+      baseURL: this.options.managementURL,
+    });
+    return this.apiClient;
   }
 
   private apiKey(): string | undefined {
@@ -159,15 +235,53 @@ export class Weflayr {
     );
   }
 
-  /** The value of the x-weflayr-metadata header: feature, call and customer. Written as ASCII so any name is a valid header. */
+  /** The model or strategy configured for a call in `models`, or `defaultModel`. */
+  modelFor(call: string): string {
+    const model = this.options.models?.[call] ?? this.options.defaultModel;
+    if (!model) {
+      throw new Error(`No model or strategy is set for the call "${call}". Add it to \`models\` or set \`defaultModel\`.`);
+    }
+    return model;
+  }
+
+  /** The customer of this function call: your `customer` option, or the signed-in user's subject. */
+  async customerOf(ctx: Auth): Promise<string | undefined> {
+    const customer = this.options.customer
+      ? await this.options.customer(ctx)
+      : (await ctx.auth.getUserIdentity())?.subject;
+    return customer ?? undefined;
+  }
+
+  /**
+   * The details of one call, with the customer read from the function's context. Weflayr's routing
+   * overrides by customer only work when every call carries one, so a call with no customer throws
+   * (or warns, with `missingCustomer: "warn"`).
+   */
+  async callMeta(
+    ctx: Auth,
+    meta: Omit<CallMeta, "customer">,
+  ): Promise<CallMeta & { model: string }> {
+    const customer = await this.customerOf(ctx);
+    if (!customer) {
+      const message = `No customer for the call "${meta.call}". Weflayr can't route it or price it per customer.`;
+      if (this.options.missingCustomer === "warn") console.warn(message);
+      else throw new Error(message);
+    }
+    return { ...meta, customer: customer ?? "unknown", model: this.modelFor(meta.call) };
+  }
+
+  /** The value of the x-weflayr-metadata header: feature, call, customer and run. Written as ASCII so any name is a valid header. */
   metadata(meta: CallMeta): string {
+    if (meta.runId !== undefined && !RUN_ID.test(meta.runId)) {
+      throw new Error("A Weflayr run id is 32 lowercase hex characters. Make one with newRunId().");
+    }
     const tags: Record<string, string> = { ...meta.tags };
     if (meta.plan) tags.plan = meta.plan;
-    if (meta.runId) tags.run_id = meta.runId;
     return asciiJson({
       feature_name: this.featureOf(meta.call),
       call_name: meta.call,
       customer_name: meta.customer,
+      ...(meta.runId ? { feature_run_uuid: meta.runId } : {}),
       ...(Object.keys(tags).length ? { tags } : {}),
     });
   }
@@ -202,10 +316,14 @@ export class Weflayr {
       latencyMs: number;
       status: "ok" | "error" | "fallback";
       error?: string;
+      /** The model that answered, when it differs from `model`. */
+      answeredBy?: string;
+      warnings?: unknown[];
     },
   ) {
+    const model = entry.answeredBy ?? entry.model;
     const estimated = this.estimateCost(
-      entry.model,
+      model,
       entry.inputTokens,
       entry.outputTokens,
     );
@@ -220,7 +338,8 @@ export class Weflayr {
       customer: entry.customer,
       call: entry.call,
       feature: this.featureOf(entry.call),
-      model: entry.model,
+      model,
+      ...(model !== entry.model ? { requestedModel: entry.model } : {}),
       status: entry.status,
       inputTokens: entry.inputTokens,
       outputTokens: entry.outputTokens,
@@ -230,12 +349,14 @@ export class Weflayr {
       runId: entry.runId,
       plan: entry.plan,
       error: entry.error,
+      ...(entry.warnings?.length ? { warnings: JSON.stringify(entry.warnings).slice(0, 2000) } : {}),
     });
   }
 
   /**
-   * Runs a model call, times it and stores customer, call, model, tokens, cost and status.
-   * A problem while storing never fails the call, and a failed call is stored as an error and thrown again.
+   * Runs a model call, times it and stores customer, call, the model that answered, tokens, cost and
+   * status. A problem while storing never fails the call, and a failed call is stored as an error and
+   * thrown again.
    */
   async track<T>(
     ctx: RunMutation,
@@ -258,14 +379,21 @@ export class Weflayr {
       });
       throw error;
     }
-    const extracted = options.extract
-      ? options.extract(result)
-      : readUsage(result);
+    const read = readResult(result);
+    const extracted = options.extract ? { ...read, ...options.extract(result) } : read;
+    if (extracted.warnings?.length) {
+      console.warn(
+        `The Weflayr gateway changed the request of "${meta.call}":`,
+        JSON.stringify(extracted.warnings),
+      );
+    }
     await this.safeRecord(ctx, {
       ...meta,
       inputTokens: extracted.inputTokens,
       outputTokens: extracted.outputTokens,
       costUsd: meta.costUsd ?? extracted.costUsd,
+      answeredBy: extracted.model,
+      warnings: extracted.warnings,
       latencyMs: Date.now() - started,
       status: meta.status ?? "ok",
     });
@@ -314,6 +442,99 @@ export class Weflayr {
     }
   }
 
+  /**
+   * Reads every customer's real cost and margin for the month from Weflayr and stores it, so budgets
+   * use Weflayr's figures and `customerStatus` answers instantly. Run it from an action, on a cron.
+   */
+  async sync(ctx: RunMutation, options: { month?: string } = {}) {
+    const month = options.month ?? currentMonth();
+    const { from, to } = monthRange(month);
+    const rows = new Map<
+      string,
+      { customer: string; costUsd: number; revenue: number | null; marginPct: number | null; riskStatus: string | null }
+    >();
+    let cursor: string | undefined;
+    do {
+      const page = await this.api.getCosts({ date_from: from, date_to: to, aggregate: "all", group_by: "customer", limit: 1000, cursor });
+      for (const row of page.rows) {
+        if (!row.customer) continue;
+        rows.set(row.customer, { customer: row.customer, costUsd: row.cost ?? 0, revenue: null, marginPct: null, riskStatus: null });
+      }
+      cursor = page.has_more && page.next_cursor ? page.next_cursor : undefined;
+    } while (cursor);
+
+    let margin = true;
+    cursor = undefined;
+    do {
+      let page;
+      try {
+        page = await this.api.getMargin({ date_from: from, date_to: to, aggregate: "all", group_by: "customer", limit: 1000, cursor });
+      } catch (error) {
+        // An internal project has no margin. Keep the costs.
+        if ((error as { status?: number }).status === 400) {
+          margin = false;
+          break;
+        }
+        throw error;
+      }
+      for (const row of page.rows) {
+        if (!row.customer) continue;
+        rows.set(row.customer, {
+          customer: row.customer,
+          costUsd: row.cost ?? rows.get(row.customer)?.costUsd ?? 0,
+          revenue: row.revenue ?? null,
+          marginPct: row.margin_pct ?? null,
+          riskStatus: row.risk_status ?? null,
+        });
+      }
+      cursor = page.has_more && page.next_cursor ? page.next_cursor : undefined;
+    } while (cursor);
+
+    const all = [...rows.values()];
+    const syncedAt = Date.now();
+    for (let i = 0; i < all.length; i += 200) {
+      await ctx.runMutation(this.component.lib.saveSynced, { month, syncedAt, rows: all.slice(i, i + 200) });
+    }
+    return { month, customers: all.length, margin };
+  }
+
+  /** One customer's real cost and margin status from the last `sync`, or null before the first one. */
+  async customerStatus(ctx: RunQuery, customer: string, month: string = currentMonth()) {
+    return await ctx.runQuery(this.component.lib.customerStatus, { customer, month });
+  }
+
+  /**
+   * Books revenue per customer and month in Weflayr, so it can work out margin. Send `revenue_id`
+   * (your invoice id) so a retried webhook overwrites the row instead of adding it twice. Retries
+   * failed requests up to three times. Skip this if Weflayr already syncs your Stripe account.
+   */
+  async sendRevenue(rows: RevenueRow[]) {
+    return await this.withRetry(() => this.api.setRevenue(rows, { upsert: true }));
+  }
+
+  /** Sets tags such as the plan on customers in Weflayr, for dashboards and margin views split by plan. */
+  async tagCustomers(customers: Record<string, Record<string, string | null>>) {
+    return await this.withRetry(() =>
+      this.api.setCustomerTags(
+        Object.entries(customers).map(([customer_name, tags]) => ({ customer_name, tags })),
+        { upsert: true },
+      ),
+    );
+  }
+
+  private async withRetry<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await fn();
+      } catch (error) {
+        const status = (error as { status?: number }).status;
+        const retryable = status === undefined || status === 429 || status >= 500;
+        if (!retryable || attempt >= attempts) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** (attempt - 1)));
+      }
+    }
+  }
+
   async setBudget(ctx: RunMutation, customer: string, monthlyUsd: number) {
     await ctx.runMutation(this.component.lib.setBudget, {
       customer,
@@ -325,6 +546,10 @@ export class Weflayr {
     await ctx.runMutation(this.component.lib.clearBudget, { customer });
   }
 
+  /**
+   * The customer's budget and spend for the month. After a `sync`, spend is Weflayr's real cost plus
+   * calls stored since shortly before the sync. Before the first sync, it is the stored calls' cost.
+   */
   async budget(
     ctx: RunQuery,
     customer: string,
@@ -333,14 +558,21 @@ export class Weflayr {
     return await ctx.runQuery(this.component.lib.budgetStatus, {
       customer,
       month,
+      settleMs: this.options.settleMs,
     });
   }
 
-  /** Throws a WeflayrBudgetError when the customer has used its monthly budget. A customer without a budget always passes. */
+  /**
+   * Throws a WeflayrBudgetError when the customer has used its monthly budget, and a
+   * WeflayrMarginError when its margin status is in `stopOnMargin`. A customer without a budget passes.
+   */
   async assertWithinBudget(ctx: RunQuery, customer: string) {
     const status = await this.budget(ctx, customer);
     if (!status.allowed && status.limitUsd !== null) {
       throw new WeflayrBudgetError(customer, status.limitUsd, status.spentUsd);
+    }
+    if (status.riskStatus && this.options.stopOnMargin?.includes(status.riskStatus)) {
+      throw new WeflayrMarginError(customer, status.riskStatus);
     }
     return status;
   }

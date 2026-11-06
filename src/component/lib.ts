@@ -110,6 +110,8 @@ export const record = mutation({
     runId: v.optional(v.string()),
     plan: v.optional(v.string()),
     error: v.optional(v.string()),
+    requestedModel: v.optional(v.string()),
+    warnings: v.optional(v.string()),
     at: v.optional(v.number()),
   },
   returns: v.id("calls"),
@@ -251,6 +253,8 @@ const callValidator = v.object({
   runId: v.optional(v.string()),
   plan: v.optional(v.string()),
   error: v.optional(v.string()),
+  requestedModel: v.optional(v.string()),
+  warnings: v.optional(v.string()),
   at: v.number(),
 });
 
@@ -354,8 +358,83 @@ export const clearBudget = mutation({
   },
 });
 
-export const budgetStatus = query({
+const syncedValidator = v.object({
+  customer: v.string(),
+  month: v.string(),
+  costUsd: v.number(),
+  revenue: v.union(v.number(), v.null()),
+  marginPct: v.union(v.number(), v.null()),
+  riskStatus: v.union(v.string(), v.null()),
+  syncedAt: v.number(),
+});
+
+async function syncedRow(ctx: QueryCtx, customer: string, month: string) {
+  return await ctx.db
+    .query("synced")
+    .withIndex("by_customer_month", (q) =>
+      q.eq("customer", customer).eq("month", month),
+    )
+    .unique();
+}
+
+export const saveSynced = mutation({
+  args: {
+    month: v.string(),
+    syncedAt: v.number(),
+    rows: v.array(
+      v.object({
+        customer: v.string(),
+        costUsd: v.number(),
+        revenue: v.union(v.number(), v.null()),
+        marginPct: v.union(v.number(), v.null()),
+        riskStatus: v.union(v.string(), v.null()),
+      }),
+    ),
+  },
+  returns: v.number(),
+  handler: async (ctx, args) => {
+    assertMonth(args.month);
+    for (const row of args.rows) {
+      const existing = await syncedRow(ctx, row.customer, args.month);
+      const value = { ...row, month: args.month, syncedAt: args.syncedAt };
+      if (existing) await ctx.db.patch(existing._id, value);
+      else await ctx.db.insert("synced", value);
+    }
+    return args.rows.length;
+  },
+});
+
+export const customerStatus = query({
   args: { customer: v.string(), month: v.string() },
+  returns: v.union(syncedValidator, v.null()),
+  handler: async (ctx, args) => {
+    assertMonth(args.month);
+    const row = await syncedRow(ctx, args.customer, args.month);
+    if (!row) return null;
+    const { _id, _creationTime, ...status } = row;
+    return status;
+  },
+});
+
+export const syncedCustomers = query({
+  args: { month: v.string(), limit: v.optional(v.number()) },
+  returns: v.array(syncedValidator),
+  handler: async (ctx, args) => {
+    assertMonth(args.month);
+    const rows = await ctx.db
+      .query("synced")
+      .withIndex("by_month", (q) => q.eq("month", args.month))
+      .take(Math.min(Math.max(args.limit ?? 500, 1), 2000));
+    return rows.map(({ _id, _creationTime, ...status }) => status);
+  },
+});
+
+export const budgetStatus = query({
+  args: {
+    customer: v.string(),
+    month: v.string(),
+    settleMs: v.optional(v.number()),
+  },
   returns: v.object({
     customer: v.string(),
     month: v.string(),
@@ -363,6 +442,8 @@ export const budgetStatus = query({
     spentUsd: v.number(),
     remainingUsd: v.union(v.number(), v.null()),
     allowed: v.boolean(),
+    source: v.union(v.literal("weflayr"), v.literal("local")),
+    riskStatus: v.union(v.string(), v.null()),
   }),
   handler: async (ctx, args) => {
     assertMonth(args.month);
@@ -370,12 +451,30 @@ export const budgetStatus = query({
       .query("budgets")
       .withIndex("by_customer", (q) => q.eq("customer", args.customer))
       .unique();
-    const rows = await dailyRows(
-      ctx,
-      { from: `${args.month}-01`, to: `${args.month}-31` },
-      args.customer,
-    );
-    const spentUsd = rows.reduce((sum, row) => sum + row.costUsd, 0);
+    const synced = await syncedRow(ctx, args.customer, args.month);
+    let spentUsd: number;
+    if (synced) {
+      // Weflayr's real cost, plus calls stored since shortly before the last sync, which Weflayr may not have recorded yet.
+      const since = synced.syncedAt - (args.settleMs ?? 300_000);
+      const recent = await ctx.db
+        .query("calls")
+        .withIndex("by_customer_at", (q) =>
+          q.eq("customer", args.customer).gt("at", since),
+        )
+        .collect();
+      spentUsd =
+        synced.costUsd +
+        recent
+          .filter((row) => dayOf(row.at).startsWith(args.month))
+          .reduce((sum, row) => sum + row.costUsd, 0);
+    } else {
+      const rows = await dailyRows(
+        ctx,
+        { from: `${args.month}-01`, to: `${args.month}-31` },
+        args.customer,
+      );
+      spentUsd = rows.reduce((sum, row) => sum + row.costUsd, 0);
+    }
     const limitUsd = budget?.monthlyUsd ?? null;
     return {
       customer: args.customer,
@@ -384,6 +483,8 @@ export const budgetStatus = query({
       spentUsd,
       remainingUsd: limitUsd === null ? null : Math.max(limitUsd - spentUsd, 0),
       allowed: limitUsd === null || spentUsd < limitUsd,
+      source: synced ? ("weflayr" as const) : ("local" as const),
+      riskStatus: synced?.riskStatus ?? null,
     };
   },
 });

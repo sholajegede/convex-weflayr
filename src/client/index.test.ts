@@ -3,15 +3,22 @@ import type { ComponentApi } from "../component/_generated/component.js";
 import {
   Weflayr,
   WeflayrBudgetError,
+  WeflayrMarginError,
   currentMonth,
   lastDays,
+  newRunId,
+  strategy,
 } from "./index.js";
+
+const RUN = "0123456789abcdef0123456789abcdef";
 
 const component = {
   lib: {
     record: "record",
     budgetStatus: "budgetStatus",
     setBudget: "setBudget",
+    saveSynced: "saveSynced",
+    customerStatus: "customerStatus",
   },
 } as unknown as ComponentApi;
 
@@ -75,18 +82,27 @@ describe("metadata", () => {
     ).toBe("other");
   });
 
-  test("plan, run id and tags are sent as tags", () => {
+  test("the run id is sent as Weflayr's feature run, and plan and tags as tags", () => {
     const weflayr = new Weflayr(component, { features });
     const parsed = JSON.parse(
       weflayr.metadata({
         customer: "a",
         call: "draft-post",
         plan: "team",
-        runId: "r1",
+        runId: RUN,
         tags: { env: "prod" },
       }),
     );
-    expect(parsed.tags).toEqual({ env: "prod", plan: "team", run_id: "r1" });
+    expect(parsed.feature_run_uuid).toBe(RUN);
+    expect(parsed.tags).toEqual({ env: "prod", plan: "team" });
+  });
+
+  test("a run id must have Weflayr's shape, and newRunId() makes one", () => {
+    const weflayr = new Weflayr(component);
+    expect(newRunId()).toMatch(/^[0-9a-f]{32}$/);
+    expect(() =>
+      weflayr.metadata({ customer: "a", call: "c", runId: "r1" }),
+    ).toThrow("32 lowercase hex");
   });
 
   test("a customer name with non ASCII characters is a valid header value", () => {
@@ -388,5 +404,152 @@ describe("budget error", () => {
     expect(new WeflayrBudgetError("acme", 25, 25.5).message).toContain(
       "$25.5 of its $25 monthly",
     );
+  });
+});
+
+describe("strategies and the customer", () => {
+  test("each call's model or strategy comes from one config object", () => {
+    const weflayr = new Weflayr(component, {
+      models: { "draft-post": strategy("drafting", 4) },
+      defaultModel: strategy("default"),
+    });
+    expect(weflayr.modelFor("draft-post")).toBe("strategy/drafting:4");
+    expect(weflayr.modelFor("scan-moments")).toBe("strategy/default");
+    expect(() => new Weflayr(component).modelFor("x")).toThrow('No model or strategy is set for the call "x"');
+  });
+
+  test("callMeta reads the customer from the signed-in user or your resolver", async () => {
+    const signedIn = { auth: { getUserIdentity: async () => ({ subject: "user_1" }) } };
+    const signedOut = { auth: { getUserIdentity: async () => null } };
+    const weflayr = new Weflayr(component, { defaultModel: strategy("default") });
+    expect(await weflayr.callMeta(signedIn, { call: "draft-post" })).toEqual({
+      call: "draft-post",
+      customer: "user_1",
+      model: "strategy/default",
+    });
+    const byOrg = new Weflayr(component, { defaultModel: "m", customer: async () => "org_9" });
+    expect((await byOrg.callMeta(signedIn, { call: "c" })).customer).toBe("org_9");
+    await expect(weflayr.callMeta(signedOut, { call: "draft-post" })).rejects.toThrow(
+      'No customer for the call "draft-post"',
+    );
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const lenient = new Weflayr(component, { defaultModel: "m", missingCustomer: "warn" });
+    expect((await lenient.callMeta(signedOut, { call: "c" })).customer).toBe("unknown");
+    expect(warn).toHaveBeenCalled();
+  });
+
+  test("track records the model a strategy picked and the gateway's warnings", async () => {
+    const ctx = fakeCtx();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const weflayr = new Weflayr(component, {
+      prices: { "claude-opus-5-5": { inputPerMillion: 4, outputPerMillion: 20 } },
+    });
+    await weflayr.track(
+      ctx,
+      { customer: "acme", call: "draft-post", model: "strategy/drafting:4" },
+      async () => ({
+        text: "hi",
+        usage: { inputTokens: 1000, outputTokens: 100 },
+        response: {
+          modelId: "claude-opus-5-5",
+          body: { weflayr_warnings: [{ parameter: "temperature", action: "removed" }] },
+        },
+      }),
+    );
+    expect(ctx.mutations[0]).toMatchObject({
+      model: "claude-opus-5-5",
+      requestedModel: "strategy/drafting:4",
+      costSource: "estimated",
+      warnings: JSON.stringify([{ parameter: "temperature", action: "removed" }]),
+    });
+    expect(ctx.mutations[0].costUsd).toBeCloseTo(0.006, 10);
+    expect(warn).toHaveBeenCalledWith(
+      'The Weflayr gateway changed the request of "draft-post":',
+      expect.stringContaining("temperature"),
+    );
+  });
+});
+
+function management(answer: (path: string, body: Record<string, unknown>) => unknown) {
+  const seen: Array<{ path: string; body: Record<string, unknown>; auth: string | null }> = [];
+  vi.stubGlobal("fetch", async (input: string, init: RequestInit) => {
+    const path = String(input).replace("https://app.weflayr.com/api", "");
+    const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+    seen.push({ path, body, auth: new Headers(init.headers).get("authorization") });
+    const value = answer(path, body);
+    if (value instanceof Response) return value;
+    return new Response(JSON.stringify(value), { headers: { "content-type": "application/json" } });
+  });
+  return seen;
+}
+
+describe("sync with Weflayr", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  test("sync stores each customer's real cost and margin for the month, page by page", async () => {
+    const seen = management((path, body) =>
+      path === "/costs/"
+        ? body.cursor
+          ? { rows: [{ date_from: "", date_to: "", customer: "globex", cost: 1 }], next_cursor: null, has_more: false }
+          : { rows: [{ date_from: "", date_to: "", customer: "acme", cost: 4 }], next_cursor: "p2", has_more: true }
+        : { rows: [{ date_from: "", date_to: "", customer: "acme", revenue: 10, cost: 4, margin: 6, margin_pct: 60, risk_status: "watch" }], next_cursor: null, has_more: false },
+    );
+    const ctx = fakeCtx();
+    const result = await new Weflayr(component).sync(ctx, { month: "2026-02" });
+
+    expect(result).toEqual({ month: "2026-02", customers: 2, margin: true });
+    expect(seen.map((call) => call.path)).toEqual(["/costs/", "/costs/", "/margin/"]);
+    expect(seen[0]).toMatchObject({
+      auth: "Bearer key",
+      body: { date_from: "2026-02-01", date_to: "2026-02-28", aggregate: "all", group_by: "customer" },
+    });
+    expect(seen[1]!.body.cursor).toBe("p2");
+    expect(ctx.mutations[0]).toMatchObject({
+      month: "2026-02",
+      rows: [
+        { customer: "acme", costUsd: 4, revenue: 10, marginPct: 60, riskStatus: "watch" },
+        { customer: "globex", costUsd: 1, revenue: null, marginPct: null, riskStatus: null },
+      ],
+    });
+  });
+
+  test("on an internal project, sync keeps the costs and skips margin", async () => {
+    management((path) =>
+      path === "/costs/"
+        ? { rows: [{ date_from: "", date_to: "", customer: "acme", cost: 2 }], next_cursor: null, has_more: false }
+        : new Response(JSON.stringify({ error: "internal project" }), { status: 400 }),
+    );
+    const ctx = fakeCtx();
+    expect(await new Weflayr(component).sync(ctx, { month: "2026-11" })).toEqual({
+      month: "2026-11",
+      customers: 1,
+      margin: false,
+    });
+  });
+
+  test("revenue is sent as upserts and retried on a server error, not on a bad request", async () => {
+    let fails = 1;
+    const seen = management((path) => {
+      if (path === "/revenue/" && fails-- > 0) return new Response("busy", { status: 503 });
+      if (path === "/customer-tags/") return new Response(JSON.stringify({ error: "bad tags" }), { status: 422 });
+      return { ok: true, rows_inserted: 1 };
+    });
+    const weflayr = new Weflayr(component);
+    expect(
+      await weflayr.sendRevenue([{ customer_name: "acme", amount: 49, month: "2026-11", revenue_id: "in_1" }]),
+    ).toEqual({ rowsInserted: 1 });
+    expect(seen.filter((call) => call.path === "/revenue/")).toHaveLength(2);
+    expect(seen[0]!.body.upsert).toBe(true);
+    await expect(weflayr.tagCustomers({ acme: { plan: "pro" } })).rejects.toThrow("422");
+    expect(seen.filter((call) => call.path === "/customer-tags/")).toHaveLength(1);
+  });
+
+  test("assertWithinBudget stops a customer whose synced margin status is listed", async () => {
+    const weflayr = new Weflayr(component, { stopOnMargin: ["unprofitable"] });
+    const ctx = fakeCtx({ allowed: true, limitUsd: null, spentUsd: 1 });
+    ctx.runQuery.mockResolvedValueOnce({ customer: "acme", month: "2026-11", allowed: true, limitUsd: null, spentUsd: 1, remainingUsd: null, source: "weflayr", riskStatus: "unprofitable" });
+    const error = await weflayr.assertWithinBudget(ctx, "acme").catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(WeflayrMarginError);
+    expect((error as Error).message).toBe('Customer "acme" is unprofitable on AI margin this month.');
   });
 });
