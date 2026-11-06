@@ -130,14 +130,27 @@ export class WeflayrApi {
   }
 
   private async post<T>(path: string, body: unknown): Promise<T> {
-    const response = await fetch(`${this.options.baseURL ?? MANAGEMENT_URL}${path}`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${this.key()}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify(body),
-    });
+    let response: Response;
+    try {
+      response = await fetch(`${this.options.baseURL ?? MANAGEMENT_URL}${path}`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${this.key()}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(30_000),
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("Set WEFLAYR_")) throw error;
+      const cause = error instanceof Error && error.cause instanceof Error ? error.cause : error;
+      const code = (cause as { code?: string }).code;
+      throw new Error(
+        `Could not reach Weflayr's management API (${this.options.baseURL ?? MANAGEMENT_URL}${path}): ${
+          cause instanceof Error ? cause.message : String(cause)
+        }${code ? ` [${code}]` : ""}`,
+      );
+    }
     const text = await response.text();
     if (!response.ok) {
       let message = text.slice(0, 300);
