@@ -1,5 +1,5 @@
 {
   "installCommand": "npm ci && npm --prefix example ci",
-  "buildCommand": "npx convex deploy --cmd 'npm run build && npm --prefix example run build' --cmd-url-env-var-name VITE_CONVEX_URL",
+  "buildCommand": "npm run build && npm --prefix example run build",
   "outputDirectory": "example/dist"
 }
