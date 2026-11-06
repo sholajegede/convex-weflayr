@@ -17,13 +17,27 @@ customer, check their numbers in Weflayr and in your tables, then widen the
 list, then set it to `*`. A customer outside the list calls the model direct and
 is not recorded.
 
+## Syncing cost and margin
+
+- Run `weflayr.sync(ctx)` from a cron, every 5 to 15 minutes. It reads the month's
+  cost and margin per customer and replaces the saved row. A failed sync leaves
+  the last one in place and budgets fall back to the saved estimates.
+- Give the key the Management scope, or set `WEFLAYR_MANAGEMENT_KEY`.
+- Weflayr takes a short time to record a call. `settleMs` (five minutes by
+  default) is how long the estimate of a recent call is added on top of the
+  synced cost. Lower it once you have seen how long Weflayr takes for your calls.
+- Send revenue from your billing webhook with `sendRevenue`, keyed by an invoice
+  id. Use one revenue source per customer and month.
+- Use `stopOnMargin` only after revenue is in Weflayr. A customer with no revenue
+  has no margin status and is never stopped by it.
+
 ## Budgets
 
 - Set a budget for every customer on a paid plan, from the same place you
   change their plan.
 - Warn before you block. Read `weflayr.budget(ctx, customer)` and show a notice
   at 80% of `limitUsd`.
-- Budgets reset on the first of each UTC month. Nothing needs to run.
+- Budgets reset on the first of each UTC month. Nothing needs to run for the reset; `sync` keeps the spend real.
 
 ## Data size and retention
 

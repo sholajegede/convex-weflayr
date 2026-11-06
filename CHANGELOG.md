@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.0
+
+- Routing strategies: `strategy(id, version)`, a `models` map per call name and a `defaultModel`; each call is saved with the model the strategy picked (`requestedModel` keeps what was asked)
+- The customer on every call: `callMeta` reads it from the signed-in user or your `customer` function, and a call without one throws unless `missingCustomer: "warn"`
+- `runId` is sent as Weflayr's `feature_run_uuid` and must be 32 lowercase hex characters; `newRunId()` now makes one. It was sent as a `run_id` tag before
+- Revenue and plan into Weflayr: `sendRevenue` (upserts, retried on 429 and 5xx) and `tagCustomers`
+- `sync` saves each customer's real cost, revenue, margin and risk status for the month, and `customerStatus` reads it
+- Budgets use that real cost plus recent estimates (`settleMs`), and `assertWithinBudget` can stop on `stopOnMargin` statuses (`WeflayrMarginError`)
+- The gateway's `weflayr_warnings` are logged and saved with the call
+- New `synced` table; the `calls` table gains `requestedModel` and `warnings`
+- The README leads with strategies, the customer on every call, revenue and margin
+
 ## 0.1.1
 
 - The diagram is now an image, so it shows on npm as well as GitHub

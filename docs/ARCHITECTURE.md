@@ -11,10 +11,11 @@ flowchart TB
     AIS["weflayrModel<br/>src/ai-sdk"]
   end
   subgraph COMP["convex-weflayr component<br/>src/component"]
-    FN["record, usage*, budget*, purge"]
+    FN["record, usage*, budget*, saveSynced, customerStatus, purge"]
     T1[("calls")]
     T2[("daily")]
     T3[("budgets")]
+    T4[("synced")]
   end
   GW["Weflayr gateway"]
 
@@ -22,10 +23,12 @@ flowchart TB
   CLI --> AIS
   AIS -->|"request + x-weflayr-metadata"| GW
   CLI -->|"record()"| FN
+  CLI -->|"sync(): cost and margin"| MG["Weflayr management API"]
   QRY --> CLI
   FN --> T1
   FN --> T2
   FN --> T3
+  FN --> T4
 ```
 
 - **Client** (`src/client`). A class your app creates once. It builds the
@@ -33,7 +36,7 @@ flowchart TB
   It runs in your app's actions, queries and mutations.
 - **AI SDK model** (`src/ai-sdk`). Returns an OpenAI compatible model pointed at
   the gateway, for use with `generateText` and `streamText`.
-- **Component** (`src/component`). Three tables and the functions that write and
+- **Component** (`src/component`). Four tables and the functions that write and
   read them. It is isolated from your own tables, so it cannot read your data
   and you cannot break its indexes.
 
