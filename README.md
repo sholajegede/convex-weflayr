@@ -1,5 +1,7 @@
 # convex-weflayr
 
+[![Convex Component](https://www.convex.dev/components/badge/convex-weflayr)](https://www.convex.dev/components/convex-weflayr)
+
 A Convex component for running your app on [Weflayr](https://weflayr.com)
 routing strategies, with every call tagged by the customer it serves. It also
 brings Weflayr's real cost and margin per customer back into your Convex
