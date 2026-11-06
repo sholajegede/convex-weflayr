@@ -12,14 +12,7 @@ adds the header for you and writes each call's usage into tables your app can
 query. So your app can act on cost: show a customer their usage, warn at 80% of
 a plan, stop at 100%.
 
-```mermaid
-flowchart LR
-  A["Convex action<br/>(your AI feature)"] -->|"1. model call + header<br/>feature, call, customer"| G["Weflayr gateway"]
-  G -->|"2. answer + usage"| A
-  A -->|"3. track() saves the call"| C[("convex-weflayr tables<br/>calls, daily totals, budgets")]
-  C -->|"4. cost per customer,<br/>call, feature, day"| Q["Your queries and UI"]
-  C -->|"5. assertWithinBudget()"| A
-```
+![How a call flows: your Convex action calls the model through the Weflayr gateway, the component saves the call, and your code reads cost and checks budgets](https://raw.githubusercontent.com/sholajegede/convex-weflayr/main/docs/images/flow.png)
 
 ## What you get
 
@@ -69,23 +62,23 @@ Open the app and paste your key. Then:
 An agent run. Four steps share one run id, so the cost of the run is the sum of
 its steps:
 
-![An agent run with the cost of each step](docs/images/agent-run.jpg)
+![An agent run with the cost of each step](https://raw.githubusercontent.com/sholajegede/convex-weflayr/main/docs/images/agent-run.jpg)
 
 A budget. After three calls the customer has used $0.000021 of a $0.00002
 budget, and the fourth call is stopped before the model runs:
 
-![A customer stopped at their monthly budget](docs/images/budget-block.jpg)
+![A customer stopped at their monthly budget](https://raw.githubusercontent.com/sholajegede/convex-weflayr/main/docs/images/budget-block.jpg)
 
 Spend by customer and by call, and every saved call:
 
-![Spend by customer](docs/images/customers.jpg)
+![Spend by customer](https://raw.githubusercontent.com/sholajegede/convex-weflayr/main/docs/images/customers.jpg)
 
-![The call log](docs/images/calls.jpg)
+![The call log](https://raw.githubusercontent.com/sholajegede/convex-weflayr/main/docs/images/calls.jpg)
 
 The same calls in the Weflayr dashboard, grouped by the feature names the
 component sent:
 
-![Cost per feature in Weflayr](docs/images/weflayr-dashboard.jpg)
+![Cost per feature in Weflayr](https://raw.githubusercontent.com/sholajegede/convex-weflayr/main/docs/images/weflayr-dashboard.jpg)
 
 About your key: it is saved in your browser's localStorage and sent with each
 call so the call can be made. It is never saved in the database. Each browser

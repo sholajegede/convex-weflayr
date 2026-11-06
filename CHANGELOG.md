@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.1
+
+- The diagram is now an image, so it shows on npm as well as GitHub
+- README images use full GitHub addresses, so they load on npm
+- A budget error shows small amounts in full, such as $0.00002
+- README section on recording streamed calls with `onFinish`
+- Test files are left out of the published package
+
 ## 0.1.0
 
 - Gateway helper: `metadata`, `headers`, `connection`, an allow list of
