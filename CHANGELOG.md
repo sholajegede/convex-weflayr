@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1
+
+- A failed request to Weflayr's management API now says why (for example a DNS or TLS error) and gives up after 30 seconds
+- Releases publish with npm trusted publishing instead of a stored token
+
 ## 0.2.0
 
 - Routing strategies: `strategy(id, version)`, a `models` map per call name and a `defaultModel`; each call is saved with the model the strategy picked (`requestedModel` keeps what was asked)
