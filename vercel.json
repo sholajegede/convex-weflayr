@@ -2,7 +2,17 @@
   "installCommand": "npm ci && npm --prefix example ci",
   "buildCommand": "npm run build && npm --prefix example run build",
   "outputDirectory": "example/dist",
+  "redirects": [
+    {
+      "source": "/",
+      "destination": "https://sholajegede.com/demos/convex-weflayr",
+      "permanent": true
+    }
+  ],
   "rewrites": [
-    { "source": "/demos/convex-weflayr/:path*", "destination": "/:path*" }
+    {
+      "source": "/demos/convex-weflayr/:path*",
+      "destination": "/:path*"
+    }
   ]
 }
